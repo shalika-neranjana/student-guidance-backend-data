@@ -1,0 +1,19 @@
+{
+  "name": "add_student_results",
+  "version": "1.0.0",
+  "description": "This is the webdashboard for insterting students' results",
+  "license": "ISC",
+  "author": "Shalika Neranjana",
+  "type": "commonjs",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "dependencies": {
+    "cors": "^2.8.6",
+    "express": "^5.2.1",
+    "mongoose": "^9.3.1"
+  }
+}
