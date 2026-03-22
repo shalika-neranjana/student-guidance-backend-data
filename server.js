@@ -1,4 +1,5 @@
 const express = require("express");
+const dns = require("node:dns");
 const mongoose = require("mongoose");
 const cors = require("cors");
 const path = require("path");
@@ -10,9 +11,38 @@ app.use(express.static(path.join(__dirname, "public")));
 
 /* ================= DATABASE ================= */
 
-mongoose.connect("mongodb+srv://dbuser:User123@itpm.mj3w7rm.mongodb.net/InternConnect")
-    .then(() => console.log("MongoDB Connected"))
-    .catch(err => console.log(err));
+const MONGODB_URI =
+    process.env.MONGODB_URI ||
+    "mongodb+srv://dbuser:User123@itpm.mj3w7rm.mongodb.net/InternConnect";
+const FALLBACK_DNS_SERVERS = (
+    process.env.MONGODB_DNS_SERVERS || "8.8.8.8,1.1.1.1"
+)
+    .split(",")
+    .map(server => server.trim())
+    .filter(Boolean);
+
+async function connectToDatabase() {
+    try {
+        await mongoose.connect(MONGODB_URI);
+        console.log("MongoDB Connected");
+    } catch (error) {
+        const isSrvDnsRefusal =
+            error?.code === "ECONNREFUSED" &&
+            error?.syscall === "querySrv";
+
+        if (!isSrvDnsRefusal || FALLBACK_DNS_SERVERS.length === 0) {
+            throw error;
+        }
+
+        console.warn(
+            `Primary DNS rejected the MongoDB SRV lookup. Retrying with ${FALLBACK_DNS_SERVERS.join(", ")}`
+        );
+
+        dns.setServers(FALLBACK_DNS_SERVERS);
+        await mongoose.connect(MONGODB_URI);
+        console.log("MongoDB Connected");
+    }
+}
 
 /* ================= MODELS ================= */
 
@@ -119,4 +149,11 @@ app.get("/", (req, res) => {
     res.sendFile(path.join(__dirname, "public", "index.html"));
 });
 
-app.listen(5000, () => console.log("Server running on \x1b[4m\x1b[34mhttp://localhost:5000/\x1b[0m"));
+connectToDatabase()
+    .then(() => {
+        app.listen(5000, () => console.log("Server running on \x1b[4m\x1b[34mhttp://localhost:5000/\x1b[0m"));
+    })
+    .catch(error => {
+        console.error("Failed to connect to MongoDB", error);
+        process.exit(1);
+    });
