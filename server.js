@@ -80,7 +80,12 @@ app.get("/students", async (req, res) => {
 
 // Get Modules
 app.get("/modules", async (req, res) => {
-    res.json(await Module.find());
+    try {
+        const modules = await Module.find().sort({ module_name: 1, module_code: 1 });
+        res.json(modules);
+    } catch (error) {
+        res.status(500).json({ message: "Failed to load modules" });
+    }
 });
 
 // Save Result

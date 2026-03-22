@@ -60,15 +60,30 @@ function resetForm() {
     caError.textContent = "";
 }
 
-function openModal() {
+async function openModal(preferredModuleId = "") {
     if (!studentFilter.value) {
         showStatus("Select a student before adding a result.", "error");
         studentFilter.focus();
         return;
     }
 
+    saveBtn.disabled = true;
+    saveBtn.textContent = "Loading...";
+
+    try {
+        await loadModules(preferredModuleId);
+    } catch {
+        showStatus("Couldn't load modules. Check that the server is running.", "error");
+        saveBtn.disabled = false;
+        saveBtn.textContent = "Save Result";
+        return;
+    }
+
+    saveBtn.disabled = false;
+    saveBtn.textContent = "Save Result";
+
     if (!modules.length) {
-        showStatus("Modules are still loading. Try again in a moment.", "error");
+        showStatus("No modules available. Add modules before creating results.", "error");
         return;
     }
 
@@ -112,24 +127,30 @@ function loadStudents() {
         });
 }
 
-function loadModules() {
-    return fetch(`${API}/modules`)
-        .then((res) => {
-            if (!res.ok) {
-                throw new Error("Failed to load modules");
-            }
+async function loadModules(preferredModuleId = "") {
+    const previousValue = moduleSelect.value;
 
-            return res.json();
-        })
-        .then((data) => {
-            modules = data;
-            moduleSelect.innerHTML = data.map((module) => `
-                <option value="${escapeHtml(module._id)}">${escapeHtml(module.module_name)} (${escapeHtml(module.module_code)})</option>
-            `).join("");
-        })
-        .catch(() => {
-            showStatus("Couldn't load modules. Check that the server is running.", "error");
-        });
+    const res = await fetch(`${API}/modules`);
+    if (!res.ok) {
+        throw new Error("Failed to load modules");
+    }
+
+    const data = await res.json();
+    modules = data;
+
+    moduleSelect.innerHTML = data.map((module) => `
+        <option value="${escapeHtml(module._id)}">${escapeHtml(module.module_name)} (${escapeHtml(module.module_code)})</option>
+    `).join("");
+
+    if (!data.length) {
+        moduleSelect.value = "";
+        return;
+    }
+
+    const selectedValue = preferredModuleId || previousValue;
+    const selectedModuleExists = data.some((module) => module._id === selectedValue);
+
+    moduleSelect.value = selectedModuleExists ? selectedValue : data[0]._id;
 }
 
 function loadResults() {
@@ -304,8 +325,7 @@ function editResult(id) {
 
     editingId = id;
     formTitle.textContent = "Edit Result";
-    openModal();
-    moduleSelect.value = result.module._id;
+    openModal(result.module._id);
     caMarksInput.value = result.caMarks;
     gradeSelect.value = result.grade;
 }
