@@ -1,7 +1,7 @@
 {
   "name": "add_student_results",
   "version": "1.0.0",
-  "description": "This is the webdashboard for insterting students' results",
+  "description": "Dashboard for managing student continuous assessment results",
   "license": "ISC",
   "author": "Shalika Neranjana",
   "type": "commonjs",
@@ -9,11 +9,19 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "lint": "eslint .",
+    "test": "node --test"
   },
   "dependencies": {
     "cors": "^2.8.6",
+    "dotenv": "^17.3.1",
     "express": "^5.2.1",
+    "helmet": "^8.1.0",
     "mongoose": "^9.3.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.1.0",
+    "globals": "^17.4.0"
   }
 }

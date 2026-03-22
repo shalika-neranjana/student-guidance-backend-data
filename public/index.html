@@ -3,6 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="Dashboard for managing student continuous assessment results.">
     <title>Student Results Dashboard</title>
     <link rel="stylesheet" href="css/styles.css">
 </head>
@@ -16,14 +17,16 @@
             <span class="pill" id="resultCount" aria-live="polite">0 results</span>
         </div>
 
-        <div id="statusBanner" class="status-banner" role="status" aria-live="polite"></div>
+        <div id="statusBanner" class="status-banner" role="status" aria-live="polite" hidden></div>
 
         <div class="panel">
             <div class="header">
                 <div class="filters">
                     <div class="field-block">
                         <label for="studentFilter">Student</label>
-                        <select id="studentFilter"></select>
+                        <select id="studentFilter">
+                            <option value="">Loading students...</option>
+                        </select>
                         <div class="field-help">Choose a student first to view or add results.</div>
                     </div>
                 </div>
@@ -31,21 +34,22 @@
                 <div class="toolbar">
                     <div class="field-block">
                         <label for="searchInput">Search module</label>
-                        <input type="text" id="searchInput" class="search" placeholder="Search by module name or code">
+                        <input type="text" id="searchInput" class="search" placeholder="Search by module name or code" autocomplete="off">
                     </div>
                     <button class="btn-action" id="clearSearchBtn" type="button">Clear</button>
-                    <button class="btn-primary" id="newResultBtn" type="button">+ New Result</button>
+                    <button class="btn-primary" id="newResultBtn" type="button" disabled>+ New Result</button>
                 </div>
             </div>
 
             <div class="table-wrap">
                 <table>
+                    <caption class="visually-hidden">Student result records</caption>
                     <thead>
                         <tr>
-                            <th>Module</th>
-                            <th>CA</th>
-                            <th>Grade</th>
-                            <th>Actions</th>
+                            <th scope="col">Module</th>
+                            <th scope="col">CA</th>
+                            <th scope="col">Grade</th>
+                            <th scope="col">Actions</th>
                         </tr>
                     </thead>
                     <tbody id="resultsTable"></tbody>
@@ -55,13 +59,15 @@
     </div>
 
     <div class="modal" id="modal" aria-hidden="true">
-        <div class="modal-content" role="dialog" aria-modal="true" aria-labelledby="formTitle">
+        <div class="modal-content" role="dialog" aria-modal="true" aria-labelledby="formTitle" aria-describedby="selectedStudentLabel">
             <h3 id="formTitle">Add Result</h3>
             <p class="subtitle" id="selectedStudentLabel">Select a student to continue.</p>
 
             <div class="form-group">
                 <label for="module">Module</label>
-                <select id="module"></select>
+                <select id="module">
+                    <option value="">Loading modules...</option>
+                </select>
             </div>
 
             <div class="form-group">

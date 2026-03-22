@@ -1,28 +1,33 @@
-const API = window.location.protocol === "file:" ? "http://localhost:5000" : "";
+const API_BASE_URL = window.location.protocol === "file:" ? "http://localhost:5000" : "";
 
-const modal = document.getElementById("modal");
-const studentFilter = document.getElementById("studentFilter");
-const moduleSelect = document.getElementById("module");
-const searchInput = document.getElementById("searchInput");
-const resultsTable = document.getElementById("resultsTable");
-const resultCount = document.getElementById("resultCount");
-const formTitle = document.getElementById("formTitle");
-const selectedStudentLabel = document.getElementById("selectedStudentLabel");
-const caMarksInput = document.getElementById("caMarks");
-const gradeSelect = document.getElementById("grade");
-const caError = document.getElementById("caError");
-const statusBanner = document.getElementById("statusBanner");
-const saveBtn = document.getElementById("saveBtn");
-const newResultBtn = document.getElementById("newResultBtn");
-const cancelBtn = document.getElementById("cancelBtn");
-const clearSearchBtn = document.getElementById("clearSearchBtn");
+const elements = {
+    caError: document.getElementById("caError"),
+    caMarksInput: document.getElementById("caMarks"),
+    cancelBtn: document.getElementById("cancelBtn"),
+    clearSearchBtn: document.getElementById("clearSearchBtn"),
+    formTitle: document.getElementById("formTitle"),
+    gradeSelect: document.getElementById("grade"),
+    modal: document.getElementById("modal"),
+    moduleSelect: document.getElementById("module"),
+    newResultBtn: document.getElementById("newResultBtn"),
+    resultCount: document.getElementById("resultCount"),
+    resultsTable: document.getElementById("resultsTable"),
+    saveBtn: document.getElementById("saveBtn"),
+    searchInput: document.getElementById("searchInput"),
+    selectedStudentLabel: document.getElementById("selectedStudentLabel"),
+    statusBanner: document.getElementById("statusBanner"),
+    studentFilter: document.getElementById("studentFilter")
+};
 
-let editingId = null;
-let allResults = [];
-let students = [];
-let modules = [];
-let isLoading = true;
-let lastFocusedElement = null;
+const state = {
+    editingId: null,
+    isLoadingResults: false,
+    isSubmitting: false,
+    lastFocusedElement: null,
+    modules: [],
+    results: [],
+    students: []
+};
 
 function escapeHtml(text) {
     return String(text)
@@ -34,361 +39,489 @@ function escapeHtml(text) {
 }
 
 function showStatus(message, type = "success") {
-    statusBanner.textContent = message;
-    statusBanner.className = `status-banner show ${type}`;
+    elements.statusBanner.hidden = false;
+    elements.statusBanner.textContent = message;
+    elements.statusBanner.className = `status-banner ${type}`;
 
     window.clearTimeout(showStatus.timeoutId);
     showStatus.timeoutId = window.setTimeout(() => {
-        statusBanner.className = "status-banner";
-        statusBanner.textContent = "";
+        elements.statusBanner.hidden = true;
+        elements.statusBanner.className = "status-banner";
+        elements.statusBanner.textContent = "";
     }, 3500);
 }
 
+function buildStudentName(student) {
+    return `${student.firstName} ${student.lastName || ""}`.trim();
+}
+
+function getSelectedStudent() {
+    return state.students.find((student) => student._id === elements.studentFilter.value) || null;
+}
+
 function getSelectedStudentName() {
-    const selected = students.find((student) => student._id === studentFilter.value);
-    if (!selected) {
-        return "No student selected";
+    const selectedStudent = getSelectedStudent();
+    return selectedStudent ? buildStudentName(selectedStudent) : "No student selected";
+}
+
+function getVisibleResults() {
+    const selectedStudentId = elements.studentFilter.value;
+    const searchTerm = elements.searchInput.value.trim().toLowerCase();
+
+    if (!selectedStudentId) {
+        return [];
     }
 
-    return `${selected.firstName} ${selected.lastName || ""}`.trim();
+    return state.results.filter((result) => {
+        if (result.student?._id !== selectedStudentId) {
+            return false;
+        }
+
+        const moduleText = `${result.module?.module_name || ""} ${result.module?.module_code || ""}`.toLowerCase();
+        return moduleText.includes(searchTerm);
+    });
+}
+
+function setModalState(isOpen) {
+    elements.modal.classList.toggle("open", isOpen);
+    elements.modal.setAttribute("aria-hidden", String(!isOpen));
+}
+
+function setSaveButtonState(isBusy, label) {
+    state.isSubmitting = isBusy;
+    elements.saveBtn.disabled = isBusy;
+    elements.saveBtn.textContent = label;
+}
+
+function updateToolbarState() {
+    const hasStudent = Boolean(elements.studentFilter.value);
+    const hasSearch = Boolean(elements.searchInput.value.trim());
+
+    elements.newResultBtn.disabled = !hasStudent;
+    elements.clearSearchBtn.disabled = !hasSearch;
 }
 
 function resetForm() {
-    moduleSelect.value = modules[0]?._id || "";
-    caMarksInput.value = "";
-    gradeSelect.value = "";
-    caError.textContent = "";
+    elements.moduleSelect.value = state.modules[0]?._id || "";
+    elements.caMarksInput.value = "";
+    elements.gradeSelect.value = "";
+    elements.caError.textContent = "";
 }
 
-async function openModal(preferredModuleId = "") {
-    if (!studentFilter.value) {
-        showStatus("Select a student before adding a result.", "error");
-        studentFilter.focus();
+function renderStudentOptions() {
+    const previousValue = elements.studentFilter.value;
+    const options = state.students.map((student) => `
+        <option value="${escapeHtml(student._id)}">${escapeHtml(buildStudentName(student))}</option>
+    `).join("");
+
+    elements.studentFilter.innerHTML = `
+        <option value="">Select a student</option>
+        ${options}
+    `;
+
+    if (state.students.some((student) => student._id === previousValue)) {
+        elements.studentFilter.value = previousValue;
+    }
+}
+
+function renderModuleOptions(selectedModuleId = "") {
+    if (!state.modules.length) {
+        elements.moduleSelect.innerHTML = '<option value="">No modules available</option>';
+        elements.moduleSelect.value = "";
         return;
     }
 
-    saveBtn.disabled = true;
-    saveBtn.textContent = "Loading...";
-
-    try {
-        await loadModules(preferredModuleId);
-    } catch {
-        showStatus("Couldn't load modules. Check that the server is running.", "error");
-        saveBtn.disabled = false;
-        saveBtn.textContent = "Save Result";
-        return;
-    }
-
-    saveBtn.disabled = false;
-    saveBtn.textContent = "Save Result";
-
-    if (!modules.length) {
-        showStatus("No modules available. Add modules before creating results.", "error");
-        return;
-    }
-
-    lastFocusedElement = document.activeElement;
-    modal.style.display = "flex";
-    modal.setAttribute("aria-hidden", "false");
-    selectedStudentLabel.textContent = `${editingId ? "Editing" : "Adding"} result for ${getSelectedStudentName()}.`;
-    window.setTimeout(() => moduleSelect.focus(), 0);
-}
-
-function closeModal() {
-    modal.style.display = "none";
-    modal.setAttribute("aria-hidden", "true");
-    editingId = null;
-    formTitle.textContent = "Add Result";
-    resetForm();
-
-    if (lastFocusedElement) {
-        lastFocusedElement.focus();
-    }
-}
-
-function loadStudents() {
-    return fetch(`${API}/students`)
-        .then((res) => {
-            if (!res.ok) {
-                throw new Error("Failed to load students");
-            }
-
-            return res.json();
-        })
-        .then((data) => {
-            students = data;
-            studentFilter.innerHTML = `
-                <option value="">Select a student</option>
-                ${data.map((student) => `<option value="${escapeHtml(student._id)}">${escapeHtml(`${student.firstName} ${student.lastName || ""}`.trim())}</option>`).join("")}
-            `;
-        })
-        .catch(() => {
-            showStatus("Couldn't load students. Check that the server is running.", "error");
-        });
-}
-
-async function loadModules(preferredModuleId = "") {
-    const previousValue = moduleSelect.value;
-
-    const res = await fetch(`${API}/modules`);
-    if (!res.ok) {
-        throw new Error("Failed to load modules");
-    }
-
-    const data = await res.json();
-    modules = data;
-
-    moduleSelect.innerHTML = data.map((module) => `
+    const previousValue = elements.moduleSelect.value;
+    const options = state.modules.map((module) => `
         <option value="${escapeHtml(module._id)}">${escapeHtml(module.module_name)} (${escapeHtml(module.module_code)})</option>
     `).join("");
 
-    if (!data.length) {
-        moduleSelect.value = "";
-        return;
-    }
+    elements.moduleSelect.innerHTML = options;
 
-    const selectedValue = preferredModuleId || previousValue;
-    const selectedModuleExists = data.some((module) => module._id === selectedValue);
+    const preferredValue = selectedModuleId || previousValue;
+    const moduleExists = state.modules.some((module) => module._id === preferredValue);
 
-    moduleSelect.value = selectedModuleExists ? selectedValue : data[0]._id;
+    elements.moduleSelect.value = moduleExists ? preferredValue : state.modules[0]._id;
 }
 
-function loadResults() {
-    isLoading = true;
-    renderTable();
-
-    fetch(`${API}/results`)
-        .then((res) => {
-            if (!res.ok) {
-                throw new Error("Failed to load results");
-            }
-
-            return res.json();
-        })
-        .then((data) => {
-            allResults = data;
-            isLoading = false;
-            renderTable();
-        })
-        .catch(() => {
-            isLoading = false;
-            showStatus("Couldn't load results. Check that the API is available.", "error");
-            renderTable();
-        });
+function renderEmptyState(message, { showAddAction = false, showClearAction = false } = {}) {
+    elements.resultsTable.innerHTML = `
+        <tr>
+            <td colspan="4" class="empty-state">
+                <strong>${escapeHtml(message.title)}</strong>
+                ${escapeHtml(message.body)}
+                <div class="empty-actions">
+                    ${showClearAction ? '<button class="btn-action" type="button" data-empty-action="clear-search">Clear search</button>' : ""}
+                    ${showAddAction ? '<button class="btn-primary" type="button" data-empty-action="new-result">+ Add Result</button>' : ""}
+                </div>
+            </td>
+        </tr>
+    `;
 }
 
-function renderTable() {
-    const studentId = studentFilter.value;
-    const search = searchInput.value.toLowerCase();
-
-    if (isLoading) {
-        resultsTable.innerHTML = '<tr class="loading-row"><td colspan="4">Loading results...</td></tr>';
-        return;
-    }
-
-    if (!studentId) {
-        resultCount.textContent = "0 results";
-        resultsTable.innerHTML = `<tr><td colspan="4" class="empty-state">
-            <strong>Select a student to get started</strong>
-            Choose a student from the filter above to view, edit, or add results.
-        </td></tr>`;
-        return;
-    }
-
-    const filtered = allResults.filter((result) => {
-        const matchStudent = result.student._id === studentId;
-        const moduleText = `${result.module.module_name}${result.module.module_code}`.toLowerCase();
-        const matchSearch = moduleText.includes(search);
-        return matchStudent && matchSearch;
-    });
-
-    resultCount.textContent = `${filtered.length} ${filtered.length === 1 ? "result" : "results"}`;
-
-    if (!filtered.length) {
-        resultsTable.innerHTML = `<tr><td colspan="4" class="empty-state">
-            <strong>No results found</strong>
-            ${search ? "Try a different search term or clear the filter." : "No results have been recorded for this student yet."}
-            <div class="empty-actions">
-                <button class="btn-action" type="button" id="emptyClearBtn"${search ? "" : " style=\"display:none\""}>Clear search</button>
-                <button class="btn-primary" type="button" id="emptyAddBtn">+ Add Result</button>
-            </div>
-        </td></tr>`;
-
-        const emptyClearBtn = document.getElementById("emptyClearBtn");
-        const emptyAddBtn = document.getElementById("emptyAddBtn");
-
-        if (emptyClearBtn) {
-            emptyClearBtn.addEventListener("click", () => {
-                searchInput.value = "";
-                renderTable();
-            });
-        }
-
-        if (emptyAddBtn) {
-            emptyAddBtn.addEventListener("click", openModal);
-        }
-
-        return;
-    }
-
-    resultsTable.innerHTML = filtered.map((result) => `
+function renderResultsRows(results) {
+    elements.resultsTable.innerHTML = results.map((result) => `
         <tr>
             <td>
                 <div class="stack">
-                    <strong>${escapeHtml(result.module.module_name)}</strong>
-                    <span class="field-help">${escapeHtml(result.module.module_code)}</span>
+                    <strong>${escapeHtml(result.module?.module_name || "Unknown module")}</strong>
+                    <span class="field-help">${escapeHtml(result.module?.module_code || "")}</span>
                 </div>
             </td>
             <td>${escapeHtml(result.caMarks)}</td>
             <td>${escapeHtml(result.grade)}</td>
             <td class="actions-cell">
                 <div class="actions-group">
-                    <button class="btn-action edit-btn" type="button" data-id="${escapeHtml(result._id)}">Edit</button>
-                    <button class="btn-danger delete-btn" type="button" data-id="${escapeHtml(result._id)}" data-module="${escapeHtml(result.module.module_name)}">Delete</button>
+                    <button class="btn-action" type="button" data-action="edit" data-id="${escapeHtml(result._id)}">Edit</button>
+                    <button class="btn-danger" type="button" data-action="delete" data-id="${escapeHtml(result._id)}" data-module="${escapeHtml(result.module?.module_name || "this module")}">Delete</button>
                 </div>
             </td>
         </tr>
     `).join("");
 }
 
-function saveResult() {
-    const caMarksValue = Number(caMarksInput.value);
+function renderTable() {
+    updateToolbarState();
 
-    if (!studentFilter.value) {
-        showStatus("Select a student before saving a result.", "error");
-        closeModal();
+    if (state.isLoadingResults) {
+        elements.resultCount.textContent = "Loading...";
+        elements.resultsTable.innerHTML = '<tr class="loading-row"><td colspan="4">Loading results...</td></tr>';
         return;
     }
 
-    if (!moduleSelect.value) {
-        showStatus("Select a module before saving.", "error");
-        moduleSelect.focus();
-        return;
-    }
-
-    if (Number.isNaN(caMarksValue) || caMarksInput.value === "" || caMarksValue < 0 || caMarksValue > 100) {
-        caError.textContent = "Enter CA marks between 0 and 100.";
-        caMarksInput.focus();
-        return;
-    }
-
-    if (!gradeSelect.value) {
-        showStatus("Select a grade before saving.", "error");
-        gradeSelect.focus();
-        return;
-    }
-
-    caError.textContent = "";
-
-    const data = {
-        student: studentFilter.value,
-        module: moduleSelect.value,
-        caMarks: caMarksValue,
-        grade: gradeSelect.value
-    };
-
-    const isEditing = Boolean(editingId);
-    const method = "POST";
-    const url = editingId ? `${API}/results/${editingId}/update` : `${API}/results`;
-
-    saveBtn.disabled = true;
-    saveBtn.textContent = editingId ? "Saving..." : "Creating...";
-
-    fetch(url, {
-        method,
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data)
-    })
-        .then((res) => {
-            if (!res.ok) {
-                throw new Error("Save failed");
+    if (!elements.studentFilter.value) {
+        elements.resultCount.textContent = "0 results";
+        renderEmptyState(
+            {
+                body: "Choose a student from the filter above to view, edit, or add results.",
+                title: "Select a student to get started"
             }
-
-            closeModal();
-            loadResults();
-            showStatus(isEditing ? "Result updated successfully." : "Result created successfully.");
-        })
-        .catch(() => {
-            showStatus("Couldn't save the result. Try again.", "error");
-        })
-        .finally(() => {
-            saveBtn.disabled = false;
-            saveBtn.textContent = "Save Result";
-        });
-}
-
-function editResult(id) {
-    const result = allResults.find((item) => item._id === id);
-    if (!result) {
+        );
         return;
     }
 
-    editingId = id;
-    formTitle.textContent = "Edit Result";
-    openModal(result.module._id);
-    caMarksInput.value = result.caMarks;
-    gradeSelect.value = result.grade;
+    const visibleResults = getVisibleResults();
+    elements.resultCount.textContent = `${visibleResults.length} ${visibleResults.length === 1 ? "result" : "results"}`;
+
+    if (!visibleResults.length) {
+        renderEmptyState(
+            {
+                body: elements.searchInput.value.trim()
+                    ? "Try a different search term or clear the filter."
+                    : "No results have been recorded for this student yet.",
+                title: "No results found"
+            },
+            {
+                showAddAction: true,
+                showClearAction: Boolean(elements.searchInput.value.trim())
+            }
+        );
+        return;
+    }
+
+    renderResultsRows(visibleResults);
 }
 
-function deleteResult(id, moduleName) {
+async function requestJson(path, options = {}) {
+    const response = await fetch(`${API_BASE_URL}${path}`, options);
+    const contentType = response.headers.get("content-type") || "";
+    const isJson = contentType.includes("application/json");
+    const payload = isJson ? await response.json() : null;
+
+    if (!response.ok) {
+        const error = new Error(payload?.message || "Request failed");
+        error.details = payload?.details || [];
+        throw error;
+    }
+
+    return payload;
+}
+
+async function loadStudents() {
+    state.students = await requestJson("/students");
+    renderStudentOptions();
+}
+
+async function loadModules({ forceRefresh = false, selectedModuleId = "" } = {}) {
+    if (forceRefresh || state.modules.length === 0) {
+        state.modules = await requestJson("/modules");
+    }
+
+    renderModuleOptions(selectedModuleId);
+    return state.modules;
+}
+
+async function loadResults() {
+    state.isLoadingResults = true;
+    renderTable();
+
+    try {
+        state.results = await requestJson("/results");
+    } catch (error) {
+        state.results = [];
+        showStatus(error.message || "Couldn't load results. Check that the API is available.", "error");
+    } finally {
+        state.isLoadingResults = false;
+        renderTable();
+    }
+}
+
+function ensureStudentSelected() {
+    if (elements.studentFilter.value) {
+        return true;
+    }
+
+    showStatus("Select a student before adding a result.", "error");
+    elements.studentFilter.focus();
+    return false;
+}
+
+async function openModal({ mode, result = null } = {}) {
+    if (!ensureStudentSelected()) {
+        return;
+    }
+
+    state.editingId = result?._id || null;
+    elements.formTitle.textContent = mode === "edit" ? "Edit Result" : "Add Result";
+    resetForm();
+    setSaveButtonState(true, "Loading...");
+
+    try {
+        await loadModules({ selectedModuleId: result?.module?._id || "" });
+    } catch {
+        showStatus("Couldn't load modules. Check that the server is running.", "error");
+        return;
+    } finally {
+        setSaveButtonState(false, "Save Result");
+    }
+
+    if (!state.modules.length) {
+        showStatus("No modules available. Add modules before creating results.", "error");
+        return;
+    }
+
+    if (result) {
+        elements.caMarksInput.value = String(result.caMarks ?? "");
+        elements.gradeSelect.value = result.grade || "";
+    }
+
+    state.lastFocusedElement = document.activeElement;
+    elements.selectedStudentLabel.textContent = `${mode === "edit" ? "Editing" : "Adding"} result for ${getSelectedStudentName()}.`;
+    setModalState(true);
+
+    window.setTimeout(() => {
+        elements.moduleSelect.focus();
+    }, 0);
+}
+
+function closeModal() {
+    setModalState(false);
+    state.editingId = null;
+    elements.formTitle.textContent = "Add Result";
+    resetForm();
+
+    if (state.lastFocusedElement instanceof HTMLElement) {
+        state.lastFocusedElement.focus();
+    }
+}
+
+function validateForm() {
+    const caMarksValue = Number(elements.caMarksInput.value);
+
+    if (!ensureStudentSelected()) {
+        closeModal();
+        return null;
+    }
+
+    if (!elements.moduleSelect.value) {
+        showStatus("Select a module before saving.", "error");
+        elements.moduleSelect.focus();
+        return null;
+    }
+
+    if (
+        elements.caMarksInput.value === "" ||
+        Number.isNaN(caMarksValue) ||
+        caMarksValue < 0 ||
+        caMarksValue > 100
+    ) {
+        elements.caError.textContent = "Enter CA marks between 0 and 100.";
+        elements.caMarksInput.focus();
+        return null;
+    }
+
+    if (!elements.gradeSelect.value) {
+        showStatus("Select a grade before saving.", "error");
+        elements.gradeSelect.focus();
+        return null;
+    }
+
+    elements.caError.textContent = "";
+
+    return {
+        caMarks: caMarksValue,
+        grade: elements.gradeSelect.value,
+        module: elements.moduleSelect.value,
+        student: elements.studentFilter.value
+    };
+}
+
+function applyValidationErrors(error) {
+    const caMarksError = error.details.find((detail) => detail.field === "caMarks");
+
+    if (caMarksError) {
+        elements.caError.textContent = caMarksError.message;
+        elements.caMarksInput.focus();
+        return true;
+    }
+
+    return false;
+}
+
+async function saveResult() {
+    const payload = validateForm();
+
+    if (!payload) {
+        return;
+    }
+
+    const isEditing = Boolean(state.editingId);
+    const requestPath = isEditing ? `/results/${state.editingId}` : "/results";
+    const requestMethod = isEditing ? "PUT" : "POST";
+
+    setSaveButtonState(true, isEditing ? "Saving..." : "Creating...");
+
+    try {
+        await requestJson(requestPath, {
+            body: JSON.stringify(payload),
+            headers: { "Content-Type": "application/json" },
+            method: requestMethod
+        });
+
+        closeModal();
+        await loadResults();
+        showStatus(isEditing ? "Result updated successfully." : "Result created successfully.");
+    } catch (error) {
+        const validationHandled = applyValidationErrors(error);
+
+        if (!validationHandled) {
+            showStatus(error.message || "Couldn't save the result. Try again.", "error");
+        }
+    } finally {
+        setSaveButtonState(false, "Save Result");
+    }
+}
+
+async function deleteResult(id, moduleName) {
     const confirmed = window.confirm(`Delete the result for ${moduleName}? This can't be undone.`);
+
     if (!confirmed) {
         return;
     }
 
-    fetch(`${API}/results/${id}/delete`, { method: "POST" })
-        .then((res) => {
-            if (!res.ok) {
-                throw new Error("Delete failed");
-            }
-
-            loadResults();
-            showStatus("Result deleted successfully.");
-        })
-        .catch(() => {
-            showStatus("Couldn't delete the result. Try again.", "error");
-        });
+    try {
+        await requestJson(`/results/${id}`, { method: "DELETE" });
+        await loadResults();
+        showStatus("Result deleted successfully.");
+    } catch (error) {
+        showStatus(error.message || "Couldn't delete the result. Try again.", "error");
+    }
 }
 
-studentFilter.addEventListener("change", renderTable);
-searchInput.addEventListener("input", renderTable);
-newResultBtn.addEventListener("click", openModal);
-cancelBtn.addEventListener("click", closeModal);
-saveBtn.addEventListener("click", saveResult);
-clearSearchBtn.addEventListener("click", () => {
-    searchInput.value = "";
+async function handleTableAction(target) {
+    const emptyAction = target.closest("[data-empty-action]");
+
+    if (emptyAction?.dataset.emptyAction === "clear-search") {
+        elements.searchInput.value = "";
+        renderTable();
+        elements.searchInput.focus();
+        return;
+    }
+
+    if (emptyAction?.dataset.emptyAction === "new-result") {
+        await openModal({ mode: "create" });
+        return;
+    }
+
+    const actionButton = target.closest("[data-action]");
+
+    if (!actionButton) {
+        return;
+    }
+
+    const result = state.results.find((item) => item._id === actionButton.dataset.id);
+
+    if (!result) {
+        showStatus("The selected result could not be found.", "error");
+        return;
+    }
+
+    if (actionButton.dataset.action === "edit") {
+        await openModal({ mode: "edit", result });
+        return;
+    }
+
+    if (actionButton.dataset.action === "delete") {
+        await deleteResult(result._id, actionButton.dataset.module || "this module");
+    }
+}
+
+async function initializeApp() {
     renderTable();
-    searchInput.focus();
+
+    try {
+        await Promise.all([loadStudents(), loadModules(), loadResults()]);
+    } catch {
+        showStatus("Couldn't finish loading the dashboard. Check that the server is running.", "error");
+    } finally {
+        updateToolbarState();
+        renderTable();
+    }
+}
+
+elements.studentFilter.addEventListener("change", () => {
+    updateToolbarState();
+    renderTable();
 });
-caMarksInput.addEventListener("input", () => {
-    if (caError.textContent) {
-        caError.textContent = "";
+
+elements.searchInput.addEventListener("input", () => {
+    updateToolbarState();
+    renderTable();
+});
+
+elements.newResultBtn.addEventListener("click", async () => {
+    await openModal({ mode: "create" });
+});
+
+elements.cancelBtn.addEventListener("click", closeModal);
+elements.saveBtn.addEventListener("click", saveResult);
+
+elements.clearSearchBtn.addEventListener("click", () => {
+    elements.searchInput.value = "";
+    renderTable();
+    elements.searchInput.focus();
+});
+
+elements.caMarksInput.addEventListener("input", () => {
+    if (elements.caError.textContent) {
+        elements.caError.textContent = "";
     }
 });
 
-modal.addEventListener("click", (event) => {
-    if (event.target === modal) {
+elements.modal.addEventListener("click", (event) => {
+    if (event.target === elements.modal) {
         closeModal();
     }
 });
 
 document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape" && modal.style.display === "flex") {
+    if (event.key === "Escape" && elements.modal.classList.contains("open")) {
         closeModal();
     }
 });
 
-resultsTable.addEventListener("click", (event) => {
-    const editButton = event.target.closest(".edit-btn");
-    const deleteButton = event.target.closest(".delete-btn");
-
-    if (editButton) {
-        editResult(editButton.dataset.id);
-    }
-
-    if (deleteButton) {
-        deleteResult(deleteButton.dataset.id, deleteButton.dataset.module);
-    }
+elements.resultsTable.addEventListener("click", async (event) => {
+    await handleTableAction(event.target);
 });
 
-Promise.all([loadStudents(), loadModules()]).finally(loadResults);
+void initializeApp();
